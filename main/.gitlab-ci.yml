@@ -1,0 +1,59 @@
+image: docker:dind
+
+variables:
+  DOCKER_DRIVER: overlay2
+  CACHE_PATH: /cache/main/${CI_COMMIT_SHORT_SHA}
+  SUB_USER: $SUB_USER
+  SUB_TOKEN: $SUB_TOKEN
+
+services:
+  - docker:dind
+
+stages:
+  - build
+  - test
+  - deploy
+  - clean
+
+build:
+  stage: build
+  script:
+    - echo "Build docker image"
+    - docker info
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker pull $CI_REGISTRY_IMAGE:latest || true
+    - docker build --build-arg SUB_USER --build-arg SUB_TOKEN --cache-from $CI_REGISTRY_IMAGE:latest --tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA --tag $CI_REGISTRY_IMAGE:latest .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+    - docker push $CI_REGISTRY_IMAGE:latest
+
+test:
+  stage: test
+  image: ${CI_REGISTRY_IMAGE}:latest
+  script:
+    - echo "Run tests"
+    - find . -name \*.pyc -delete && find . -name __pycache__ -exec rm -rv {} +
+    - make tests
+  coverage: '/^TOTAL\s+\d+\s+\d+\s+(\d+%)/'
+
+pages:
+  stage: deploy
+  image: ${CI_REGISTRY_IMAGE}:latest
+  script:
+    - echo "Create docs"
+    - find . -name \*.pyc -delete && find . -name __pycache__ -exec rm -rv {} +
+    - make docs
+    - mv docs public
+  cache:
+    key: "$CI_COMMIT_SHORT_SHA"
+    untracked: true
+    policy: pull
+  artifacts:
+    paths:
+    - public
+
+clean:
+  stage: clean
+  script:
+    - echo "Clean CACHE_PATH ${CACHE_PATH}"
+    - rm -rf "$CACHE_PATH"*
+  when: always
